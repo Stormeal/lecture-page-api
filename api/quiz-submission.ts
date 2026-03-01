@@ -15,13 +15,12 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // Validate env vars early (avoids opaque crashes)
     const missing = ["GOOGLE_CLIENT_EMAIL", "GOOGLE_PRIVATE_KEY", "GOOGLE_SHEET_ID"].filter((k) => !process.env[k]);
     if (missing.length) {
       return res.status(500).json({ success: false, message: "Missing environment variables", missing });
     }
 
-    const { course, quizId, questionId, selectedOption, isCorrect, attempts, userId } = req.body;
+    const { course, quizId, questionId, selectedOption, isCorrect, attempts, userId } = req.body ?? {};
 
     const auth = new google.auth.GoogleAuth({
       credentials: {
@@ -33,27 +32,26 @@ export default async function handler(req: any, res: any) {
 
     const sheets = google.sheets({ version: "v4", auth });
 
+    const resolvedUserId = String(userId ?? "").trim() || "anonymous";
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: "Sheet1",
       valueInputOption: "USER_ENTERED",
       requestBody: {
         values: [
-          [
-            new Date().toISOString(),
-            course,
-            quizId,
-            questionId,
-            selectedOption,
-            isCorrect,
-            attempts,
-            userId ?? "anonymous",
-          ],
+          [new Date().toISOString(), course, quizId, questionId, selectedOption, isCorrect, attempts, resolvedUserId],
         ],
       },
     });
 
-    return res.status(200).json({ success: true });
+    return res.status(200).json({
+      success: true,
+      received: {
+        userId,
+        resolvedUserId,
+      },
+    });
   } catch (error: any) {
     console.error(error);
     return res.status(500).json({
