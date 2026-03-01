@@ -18,8 +18,17 @@ function addMonths(date: Date, months: number) {
 }
 
 function randomSessionId() {
-  // Not cryptographically perfect, but fine for now.
   return `sess_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+type Role = "student" | "teacher" | "admin";
+
+function normalizeRole(value: unknown): Role {
+  const v = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (v === "admin" || v === "teacher" || v === "student") return v;
+  return "student";
 }
 
 export default async function handler(req: any, res: any) {
@@ -66,10 +75,10 @@ export default async function handler(req: any, res: any) {
     const normalizedPassword = String(password);
 
     // 1) Validate user credentials against AuthUsers
-    // Range: username | passwordHash (temporary plaintext) | active | notes
+    // Your sheet (per screenshot): A=username, B=passwordHash (plaintext for now), C=active, D=notes, E=role
     const usersResp = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "AuthUsers!A2:D",
+      range: "AuthUsers!A2:E",
     });
 
     const userRows = usersResp.data.values ?? [];
@@ -84,8 +93,9 @@ export default async function handler(req: any, res: any) {
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
+    const role = normalizeRole(userMatch?.[4]);
+
     // 2) Validate per-course access against AuthAccess
-    // Range: username | courseSlug | active
     const accessResp = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range: "AuthAccess!A2:C",
@@ -100,7 +110,6 @@ export default async function handler(req: any, res: any) {
     });
 
     if (!hasAccess) {
-      // Keep this as 401 so we don't leak which part failed
       return res.status(401).json({ success: false, message: "Invalid credentials" });
     }
 
@@ -112,12 +121,13 @@ export default async function handler(req: any, res: any) {
     const lastSeenAt = firstAuthenticatedAt;
 
     // Append session to AuthSessions
+    // Suggested columns (now): sessionId, username, role, firstAuthenticatedAt, expiresAt, revokedAt, lastSeenAt
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: "AuthSessions",
       valueInputOption: "USER_ENTERED",
       requestBody: {
-        values: [[sessionId, normalizedUsername, firstAuthenticatedAt, expiresAt, "", lastSeenAt]],
+        values: [[sessionId, normalizedUsername, role, firstAuthenticatedAt, expiresAt, "", lastSeenAt]],
       },
     });
 
@@ -125,6 +135,7 @@ export default async function handler(req: any, res: any) {
       success: true,
       sessionId,
       expiresAt,
+      role,
     });
   } catch (error: any) {
     console.error(error);
