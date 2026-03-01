@@ -1,11 +1,27 @@
 meta {
   name: USERS - UPDATE
   type: http
-  seq: 3
+  seq: 4
 }
 
 put {
   url: https://lecture-page-api.vercel.app/api/admin-users
-  body: none
+  body: json
   auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{SESSION_ID}}
+}
+
+body:json {
+  {
+    "username": "bruno_test_user_1",
+    "password": "NewPass123",
+    "role": "teacher",
+    "active": true,
+    "notes": "Updated via Bruno",
+    "courses": ["fundamental-dev"]
+  }
 }

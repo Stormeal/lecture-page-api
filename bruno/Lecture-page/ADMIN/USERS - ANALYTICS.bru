@@ -1,0 +1,15 @@
+meta {
+  name: USERS - ANALYTICS
+  type: http
+  seq: 2
+}
+
+get {
+  url: https://lecture-page-api.vercel.app/api/admin-analytics
+  body: none
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{SESSION_ID}}
+}

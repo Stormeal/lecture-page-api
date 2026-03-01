@@ -1,11 +1,22 @@
 meta {
   name: USERS - DELETE
   type: http
-  seq: 4
+  seq: 5
 }
 
 delete {
   url: https://lecture-page-api.vercel.app/api/admin-users
-  body: none
+  body: json
   auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{SESSION_ID}}
+}
+
+body:json {
+  {
+    "username": "bruno_test_user_1"
+  }
 }
