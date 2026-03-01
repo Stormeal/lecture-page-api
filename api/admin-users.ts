@@ -181,8 +181,6 @@ export default async function handler(req: any, res: any) {
     // GET: list users + courses + daysLeft
     // -----------------------
     if (req.method === "GET") {
-      // AuthUsers columns:
-      // A=username, B=password, C=active, D=notes, E=role
       const usersResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthUsers!A2:E",
@@ -190,8 +188,6 @@ export default async function handler(req: any, res: any) {
 
       const userRows: any[] = usersResp.data.values ?? [];
 
-      // AuthAccess columns:
-      // A=username, B=courseSlug, C=active
       const accessResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthAccess!A2:C",
@@ -199,8 +195,6 @@ export default async function handler(req: any, res: any) {
 
       const accessRows: any[] = accessResp.data.values ?? [];
 
-      // AuthSessions columns:
-      // A=sessionId, B=username, C=role, D=firstAuthenticatedAt, E=expiresAt, F=revokedAt, G=lastSeenAt
       const sessionsResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthSessions!A2:G",
@@ -208,7 +202,6 @@ export default async function handler(req: any, res: any) {
 
       const sessionRows: any[] = sessionsResp.data.values ?? [];
 
-      // Build username -> active course slugs
       const coursesByUser = new Map<string, string[]>();
       for (const r of accessRows) {
         const u = String(r?.[0] ?? "").trim();
@@ -222,10 +215,9 @@ export default async function handler(req: any, res: any) {
         coursesByUser.set(u, arr);
       }
 
-      // Build username -> earliest firstAuthenticatedAt
       const earliestFirstAuthByUser = new Map<string, number>();
       for (const r of sessionRows) {
-        const u = String(r?.[1] ?? "").trim(); // username
+        const u = String(r?.[1] ?? "").trim();
         if (!u) continue;
 
         const firstAuthMs = parseIsoMs(r?.[3]);
@@ -490,7 +482,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // -----------------------
-    // DELETE: hard delete user (AuthUsers row + all AuthAccess rows)
+    // DELETE: hard delete user (AuthUsers + AuthAccess + QuizSubmissions)
     // -----------------------
     if (req.method === "DELETE") {
       const body = req.body ?? {};
@@ -502,15 +494,19 @@ export default async function handler(req: any, res: any) {
 
       const authUsersSheetId = await getSheetIdByTitle(sheets, spreadsheetId, "AuthUsers");
       const authAccessSheetId = await getSheetIdByTitle(sheets, spreadsheetId, "AuthAccess");
+      const quizSubmissionsSheetId = await getSheetIdByTitle(sheets, spreadsheetId, "QuizSubmissions");
 
       if (authUsersSheetId === null) {
         return res.status(500).json({ success: false, message: "Sheet AuthUsers not found" });
       }
-
       if (authAccessSheetId === null) {
         return res.status(500).json({ success: false, message: "Sheet AuthAccess not found" });
       }
+      if (quizSubmissionsSheetId === null) {
+        return res.status(500).json({ success: false, message: "Sheet QuizSubmissions not found" });
+      }
 
+      // --- Find AuthUsers row ---
       const usersResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthUsers!A2:E",
@@ -523,35 +519,62 @@ export default async function handler(req: any, res: any) {
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
-      const authUsersRowIndexZeroBased = 1 + userIndex;
+      const authUsersRowIndexZeroBased = 1 + userIndex; // header row = 0
 
+      // --- Collect AuthAccess rows for this user ---
       const accessResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthAccess!A2:C",
       });
 
       const accessRows: any[] = accessResp.data.values ?? [];
-      const accessRowIndicesZeroBased: number[] = [];
+      const authAccessRowIndicesZeroBased: number[] = [];
 
       for (let i = 0; i < accessRows.length; i++) {
         const r = accessRows[i];
         const u = String(r?.[0] ?? "").trim();
         if (u === username) {
-          accessRowIndicesZeroBased.push(1 + i);
+          authAccessRowIndicesZeroBased.push(1 + i); // header row = 0
         }
       }
 
-      if (accessRowIndicesZeroBased.length > 0) {
-        await deleteRowsByIndices(sheets, spreadsheetId, authAccessSheetId, accessRowIndicesZeroBased);
+      // --- Collect QuizSubmissions rows for this user ---
+      // Expected columns:
+      // A=timestamp, B=course, C=quizId, D=questionId, E=selectedOption, F=isCorrect, G=attempts, H=userId
+      const quizResp = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: "QuizSubmissions!A2:H",
+      });
+
+      const quizRows: any[] = quizResp.data.values ?? [];
+      const quizRowIndicesZeroBased: number[] = [];
+
+      for (let i = 0; i < quizRows.length; i++) {
+        const r = quizRows[i];
+        const userId = String(r?.[7] ?? "").trim(); // column H (0-based index 7)
+        if (userId === username) {
+          quizRowIndicesZeroBased.push(1 + i); // header row = 0
+        }
       }
 
+      // Delete dependent rows first
+      if (quizRowIndicesZeroBased.length > 0) {
+        await deleteRowsByIndices(sheets, spreadsheetId, quizSubmissionsSheetId, quizRowIndicesZeroBased);
+      }
+
+      if (authAccessRowIndicesZeroBased.length > 0) {
+        await deleteRowsByIndices(sheets, spreadsheetId, authAccessSheetId, authAccessRowIndicesZeroBased);
+      }
+
+      // Delete the user row last
       await deleteRowsByIndices(sheets, spreadsheetId, authUsersSheetId, [authUsersRowIndexZeroBased]);
 
       return res.status(200).json({
         success: true,
         deleted: {
           username,
-          authAccessRowsDeleted: accessRowIndicesZeroBased.length,
+          authAccessRowsDeleted: authAccessRowIndicesZeroBased.length,
+          quizSubmissionRowsDeleted: quizRowIndicesZeroBased.length,
         },
       });
     }
