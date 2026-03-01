@@ -1,15 +1,11 @@
 meta {
-  name: ADMIN-USERS
+  name: USERS - UPDATE
   type: http
   seq: 3
 }
 
-get {
+put {
   url: https://lecture-page-api.vercel.app/api/admin-users
   body: none
   auth: inherit
-}
-
-headers {
-  Authorization: Bearer {{SESSION_ID}}
 }
