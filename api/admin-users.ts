@@ -39,6 +39,25 @@ function uniqueNonEmptyStrings(values: unknown): string[] {
   return [...set];
 }
 
+function addMonths(date: Date, months: number) {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+
+  // Handle month rollover (e.g. Jan 31 + 1 month)
+  if (d.getDate() < day) {
+    d.setDate(0);
+  }
+
+  return d;
+}
+
+function daysLeftUntil(ms: number): number {
+  const diff = ms - Date.now();
+  const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+  return Math.max(0, days);
+}
+
 async function getSheets() {
   const missing = ["GOOGLE_CLIENT_EMAIL", "GOOGLE_PRIVATE_KEY", "GOOGLE_SHEET_ID"].filter((k) => !process.env[k]);
   if (missing.length) {
@@ -148,7 +167,6 @@ export default async function handler(req: any, res: any) {
 
     const { sheets, spreadsheetId } = sheetsInit;
 
-    // Expect: Authorization: Bearer sess_xxx
     const sessionId = requireBearerSessionId(req);
     if (!sessionId) {
       return res.status(401).json({ success: false, message: "Missing session" });
@@ -160,7 +178,7 @@ export default async function handler(req: any, res: any) {
     }
 
     // -----------------------
-    // GET: list users
+    // GET: list users + courses + daysLeft
     // -----------------------
     if (req.method === "GET") {
       // AuthUsers columns:
@@ -170,18 +188,77 @@ export default async function handler(req: any, res: any) {
         range: "AuthUsers!A2:E",
       });
 
-      const rows: any[] = usersResp.data.values ?? [];
+      const userRows: any[] = usersResp.data.values ?? [];
 
-      const users = rows
+      // AuthAccess columns:
+      // A=username, B=courseSlug, C=active
+      const accessResp = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: "AuthAccess!A2:C",
+      });
+
+      const accessRows: any[] = accessResp.data.values ?? [];
+
+      // AuthSessions columns:
+      // A=sessionId, B=username, C=role, D=firstAuthenticatedAt, E=expiresAt, F=revokedAt, G=lastSeenAt
+      const sessionsResp = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: "AuthSessions!A2:G",
+      });
+
+      const sessionRows: any[] = sessionsResp.data.values ?? [];
+
+      // Build username -> active course slugs
+      const coursesByUser = new Map<string, string[]>();
+      for (const r of accessRows) {
+        const u = String(r?.[0] ?? "").trim();
+        const slug = String(r?.[1] ?? "").trim();
+        const active = String(r?.[2] ?? "").trim();
+        if (!u || !slug) continue;
+        if (active !== "1") continue;
+
+        const arr = coursesByUser.get(u) ?? [];
+        arr.push(slug);
+        coursesByUser.set(u, arr);
+      }
+
+      // Build username -> earliest firstAuthenticatedAt
+      const earliestFirstAuthByUser = new Map<string, number>();
+      for (const r of sessionRows) {
+        const u = String(r?.[1] ?? "").trim(); // username
+        if (!u) continue;
+
+        const firstAuthMs = parseIsoMs(r?.[3]);
+        if (firstAuthMs === null) continue;
+
+        const current = earliestFirstAuthByUser.get(u);
+        if (current === undefined || firstAuthMs < current) {
+          earliestFirstAuthByUser.set(u, firstAuthMs);
+        }
+      }
+
+      const users = userRows
         .map((r) => {
           const username = String(r?.[0] ?? "").trim();
           if (!username) return null;
 
+          const active = String(r?.[2] ?? "").trim() === "1";
+          const role = normalizeRole(r?.[4]);
+          const notes = String(r?.[3] ?? "").trim();
+
+          const courses = [...new Set(coursesByUser.get(username) ?? [])].sort((a, b) => a.localeCompare(b));
+
+          const firstAuthMs = earliestFirstAuthByUser.get(username);
+          const daysLeft =
+            typeof firstAuthMs === "number" ? daysLeftUntil(addMonths(new Date(firstAuthMs), 3).getTime()) : null;
+
           return {
             username,
-            active: String(r?.[2] ?? "").trim() === "1",
-            role: normalizeRole(r?.[4]),
-            notes: String(r?.[3] ?? "").trim(),
+            active,
+            role,
+            notes,
+            courses,
+            daysLeft,
           };
         })
         .filter(Boolean);
@@ -216,7 +293,6 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // Ensure user does not already exist in AuthUsers
       const existingUsersResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthUsers!A2:E",
@@ -232,7 +308,6 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // Append new user to AuthUsers
       await sheets.spreadsheets.values.append({
         spreadsheetId,
         range: "AuthUsers",
@@ -242,7 +317,6 @@ export default async function handler(req: any, res: any) {
         },
       });
 
-      // Add access rows to AuthAccess
       const accessResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthAccess!A2:C",
@@ -301,7 +375,6 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ success: false, message: "Missing username" });
       }
 
-      // Find user row in AuthUsers (A2:E)
       const usersResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthUsers!A2:E",
@@ -314,8 +387,6 @@ export default async function handler(req: any, res: any) {
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
-      // Sheet row number (1-based) for update range:
-      // A2 is index 0, so rowNumber = 2 + userIndex
       const userRowNumber = 2 + userIndex;
       const existing = userRows[userIndex] ?? [];
 
@@ -337,7 +408,6 @@ export default async function handler(req: any, res: any) {
         ? String(notesMaybe ?? "").trim()
         : existingNotes;
 
-      // Update AuthUsers row (A:E)
       await sheets.spreadsheets.values.update({
         spreadsheetId,
         range: `AuthUsers!A${userRowNumber}:E${userRowNumber}`,
@@ -347,13 +417,11 @@ export default async function handler(req: any, res: any) {
         },
       });
 
-      // Replace access only if "courses" was provided
       if (coursesProvided) {
         if (desiredCourseSlugs.length === 0) {
           return res.status(400).json({ success: false, message: "Select at least one course" });
         }
 
-        // Read AuthAccess rows (A2:C)
         const accessResp = await sheets.spreadsheets.values.get({
           spreadsheetId,
           range: "AuthAccess!A2:C",
@@ -361,8 +429,6 @@ export default async function handler(req: any, res: any) {
 
         const accessRows: any[] = accessResp.data.values ?? [];
 
-        // Collect existing access rows for this user with their sheet row number
-        // rowNumber = 2 + index
         const existingForUser = accessRows
           .map((r, idx) => ({
             idx,
@@ -375,9 +441,6 @@ export default async function handler(req: any, res: any) {
 
         const desired = new Set<string>(desiredCourseSlugs.map((s) => s.trim()).filter(Boolean));
 
-        // Build batch updates:
-        // - Set active=1 for slugs in desired (if row exists)
-        // - Set active=0 for slugs NOT in desired (if row exists)
         const updates: Array<{ range: string; values: string[][] }> = [];
 
         for (const row of existingForUser) {
@@ -400,7 +463,6 @@ export default async function handler(req: any, res: any) {
           });
         }
 
-        // Add rows for desired slugs that do NOT exist at all for this user
         const existingSlugSet = new Set(existingForUser.map((x) => x.slug));
         const missingSlugs = [...desired].filter((slug) => !existingSlugSet.has(slug));
 
@@ -438,7 +500,6 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ success: false, message: "Missing username" });
       }
 
-      // Need sheetIds for deleteDimension
       const authUsersSheetId = await getSheetIdByTitle(sheets, spreadsheetId, "AuthUsers");
       const authAccessSheetId = await getSheetIdByTitle(sheets, spreadsheetId, "AuthAccess");
 
@@ -450,7 +511,6 @@ export default async function handler(req: any, res: any) {
         return res.status(500).json({ success: false, message: "Sheet AuthAccess not found" });
       }
 
-      // Find AuthUsers row index (0-based within the sheet) to delete
       const usersResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthUsers!A2:E",
@@ -463,11 +523,8 @@ export default async function handler(req: any, res: any) {
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
-      // Convert to sheet row index (0-based):
-      // A2 is sheet row index 1 (because row 1 is headers)
       const authUsersRowIndexZeroBased = 1 + userIndex;
 
-      // Find ALL AuthAccess row indices to delete for this username
       const accessResp = await sheets.spreadsheets.values.get({
         spreadsheetId,
         range: "AuthAccess!A2:C",
@@ -480,17 +537,14 @@ export default async function handler(req: any, res: any) {
         const r = accessRows[i];
         const u = String(r?.[0] ?? "").trim();
         if (u === username) {
-          // A2 is sheet row index 1
           accessRowIndicesZeroBased.push(1 + i);
         }
       }
 
-      // Delete AuthAccess rows first (bottom-up)
       if (accessRowIndicesZeroBased.length > 0) {
         await deleteRowsByIndices(sheets, spreadsheetId, authAccessSheetId, accessRowIndicesZeroBased);
       }
 
-      // Delete AuthUsers row
       await deleteRowsByIndices(sheets, spreadsheetId, authUsersSheetId, [authUsersRowIndexZeroBased]);
 
       return res.status(200).json({
