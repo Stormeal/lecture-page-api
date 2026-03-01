@@ -1,0 +1,30 @@
+meta {
+  name: ADMIN-USERS - CREATE
+  type: http
+  seq: 4
+}
+
+post {
+  url: https://lecture-page-api.vercel.app/api/admin-users
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{SESSION_ID}}
+}
+
+body:json {
+  {
+    "username": "bruno_test_user_1",
+    "password": "pw123",
+    "role": "student",
+    "active": true,
+    "notes": "Created from Bruno",
+    "courses": [
+      "fundamental-dev",
+      "playwright"
+    ]
+  }
+}
