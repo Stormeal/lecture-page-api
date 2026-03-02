@@ -1,0 +1,16 @@
+LECTURE-PAGE-API/
+│
+├── api/
+│   ├── admin-analytics.ts
+│   ├── admin-users.ts
+│   ├── auth-login.ts
+│   └── quiz-submission.ts
+│
+├── bruno/
+│
+├── node_modules/
+│
+├── .gitignore
+├── package-lock.json
+├── package.json
+└── tsconfig.json
