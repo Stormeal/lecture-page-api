@@ -13,3 +13,7 @@ get {
 params:query {
   username: ast
 }
+
+headers {
+  Authorization: Bearer {{SESSION_ID}}
+}

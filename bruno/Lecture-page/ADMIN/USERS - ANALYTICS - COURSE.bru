@@ -1,0 +1,19 @@
+meta {
+  name: USERS - ANALYTICS - COURSE
+  type: http
+  seq: 7
+}
+
+get {
+  url: https://lecture-page-api.vercel.app/api/admin-analytics-course?course=playwright
+  body: none
+  auth: inherit
+}
+
+params:query {
+  course: playwright
+}
+
+headers {
+  Authorization: Bearer {{SESSION_ID}}
+}
