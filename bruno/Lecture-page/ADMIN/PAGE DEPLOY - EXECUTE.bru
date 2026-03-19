@@ -1,0 +1,14 @@
+meta {
+  name: PAGE DEPLOY - EXECUTE
+  type: http
+  seq: 9
+}
+
+post {
+  url: https://lecture-page-api.vercel.app/api/admin-deploy-page
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{SESSION_ID}}
+}
