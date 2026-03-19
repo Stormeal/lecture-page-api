@@ -1,0 +1,23 @@
+meta {
+  name: TEST RUNNER - EXECUTE
+  type: http
+  seq: 8
+}
+
+post {
+  url: https://lecture-page-api.vercel.app/api/admin-test-runs
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  Authorization: Bearer {{SESSION_ID}}
+}
+
+body:json {
+  {
+    "environment": "dev",
+    "suiteTag": "smoke"
+  }
+}
