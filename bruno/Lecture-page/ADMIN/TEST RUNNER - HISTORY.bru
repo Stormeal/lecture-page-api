@@ -1,0 +1,14 @@
+meta {
+  name: TEST RUNNER - HISTORY
+  type: http
+  seq: 10
+}
+
+get {
+  url: https://lecture-page-api.vercel.app/api/admin-test-runs-history
+  auth: inherit
+}
+
+headers {
+  Authorization: Bearer {{SESSION_ID}}
+}
